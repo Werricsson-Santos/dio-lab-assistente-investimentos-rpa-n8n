@@ -1,0 +1,255 @@
+{
+  "name": "Assistente de Investimentos",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b1f0c6a2-0001-4a7e-9c11-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "5b0e2a3c-6d1f-4e8a-9b7c-0c1e17e50001"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "b1f0c6a2-0002-4a7e-9c11-000000000002",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Converte o CSV de investimentos (texto) em uma lista de objetos\nconst csv = $input.first().json.data;\nconst linhas = csv.trim().split('\\n').map(l => l.trim()).filter(Boolean);\nconst cabecalho = linhas.shift().split(',').map(c => c.trim());\n\nconst investimentos = linhas.map(linha => {\n  const valores = linha.split(',');\n  return Object.fromEntries(cabecalho.map((col, i) => [col, (valores[i] || '').trim()]));\n});\n\nreturn [{ json: { investimentos } }];\n"
+      },
+      "id": "b1f0c6a2-0003-4a7e-9c11-000000000003",
+      "name": "Code in JavaScript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "b1f0c6a2-0004-4a7e-9c11-000000000004",
+      "name": "Merge",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        660,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Cruza cada cliente (vindo do Webhook) com os investimentos do seu perfil\n// que cabem no saldo dele\nconst { body, investimentos } = $input.first().json;\nconst clientes = Array.isArray(body) ? body : (body.clientes || []);\n\n// \"R$ 12.500,00\" -> 12500\nconst paraNumero = s => Number(String(s).replace('R$', '').split('.').join('').replace(',', '.').trim()) || 0;\n\nconst resultado = clientes.map(cliente => {\n  const perfil = String(cliente.perfil || '').trim().toLowerCase();\n  const saldo = paraNumero(cliente.saldo);\n  const recomendacoes = investimentos.filter(inv =>\n    inv.perfil.toLowerCase() === perfil && saldo >= Number(inv.minimo)\n  );\n  return { ...cliente, saldoNumerico: saldo, recomendacoes };\n});\n\nreturn [{ json: { clientes: resultado } }];\n"
+      },
+      "id": "b1f0c6a2-0005-4a7e-9c11-000000000005",
+      "name": "Code in JavaScript1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Separa um item por cliente e monta o briefing (prompt) para o LLM\nconst { clientes } = $input.first().json;\n\nreturn clientes.map(cliente => {\n  const produtos = cliente.recomendacoes.length\n    ? cliente.recomendacoes\n        .map(r => `- ${r.produto} (rentabilidade: ${r.rentabilidade}, aplicação mínima: R$ ${r.minimo})`)\n        .join('\\n')\n    : '- Nenhum produto do perfil cabe no saldo atual';\n\n  const prompt = [\n    'Escreva um email curto de recomendação de investimentos para o cliente abaixo.',\n    '',\n    `Nome: ${cliente.nome}`,\n    `Perfil de investidor: ${cliente.perfil}`,\n    `Saldo disponível: ${cliente.saldo}`,\n    'Produtos indicados para o perfil e saldo:',\n    produtos,\n    '',\n    'Regras:',\n    '- Trate o cliente pelo primeiro nome, em tom cordial e profissional.',\n    '- Cite apenas os produtos listados acima, sem inventar outros nem prometer rentabilidade.',\n    '- Se nenhum produto couber no saldo, sugira aportar mais ou falar com um assessor.',\n    '- Máximo de 120 palavras no corpo e assine como \"Equipe de Investimentos\".',\n    'Responda somente em JSON no formato {\"assunto\": \"...\", \"corpo\": \"...\"}.'\n  ].join('\\n');\n\n  return { json: { ...cliente, prompt } };\n});\n"
+      },
+      "id": "b1f0c6a2-0006-4a7e-9c11-000000000006",
+      "name": "Code in JavaScript2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3.5-flash-lite",
+          "cachedResultName": "models/gemini-3.5-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "={{ $json.prompt }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "options": {
+          "systemMessage": "Você é um assessor de investimentos brasileiro que escreve emails claros, curtos e personalizados."
+        }
+      },
+      "id": "b1f0c6a2-0007-4a7e-9c11-000000000007",
+      "name": "Message a model",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Junta a resposta do LLM com os dados do cliente (mesma ordem dos itens)\nconst clientes = $('Code in JavaScript2').all();\n\nreturn $input.all().map((item, i) => {\n  const cliente = clientes[i].json;\n  const texto = (item.json.content?.parts || []).map(p => p.text || '').join('').trim();\n\n  let email;\n  try {\n    email = JSON.parse(texto.replace(/^```(json)?/, '').replace(/```$/, '').trim());\n  } catch (e) {\n    email = { assunto: 'Recomendações de investimento para você', corpo: texto };\n  }\n\n  return {\n    json: {\n      nome: cliente.nome,\n      email: cliente.email,\n      saldo: cliente.saldo,\n      perfil: cliente.perfil,\n      recomendacoes: cliente.recomendacoes.map(r => r.produto),\n      assunto: email.assunto,\n      mensagem: email.corpo\n    }\n  };\n});\n"
+      },
+      "id": "b1f0c6a2-0008-4a7e-9c11-000000000008",
+      "name": "Code in JavaScript3",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "b1f0c6a2-0009-4a7e-9c11-000000000009",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "active": false
+}

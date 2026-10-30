@@ -83,7 +83,7 @@ Antes de começar, explore o repositório base que já contém a estrutura inici
 
 1. **Página de Clientes (`docs/index.html`):** Uma página HTML hospedada no GitHub Pages com uma lista de clientes fictícios contendo nome, email, saldo e perfil de investidor (Conservador, Moderado ou Arrojado). Disponível online [neste link](https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n).
 2. **Dados de Investimentos (`docs/data.csv`):** Um arquivo CSV também hospedado no GitHub Pages com opções de investimento organizadas por perfil. Disponível online [neste link](https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv).
-3. **Script de RPA (`src/extrair_clientes.ipynb`):** Um notebook Python que acessa a página de clientes e extrai os dados da tabela usando BeautifulSoup.
+3. **Script de RPA (`rpa/extrair_clientes.ipynb`):** Um notebook Python que acessa a página de clientes e extrai os dados da tabela usando BeautifulSoup.
 
 > 🤖 **Por que o script é considerado RPA?** Ele faz exatamente o que um humano faria manualmente: abre uma página, lê os dados de uma tabela e os envia para outro sistema. A diferença é que o "robô" (código) executa isso automaticamente. Essa abordagem é útil quando não existe uma API disponível ou quando precisamos integrar sistemas legados.
 
@@ -91,9 +91,51 @@ Antes de começar, explore o repositório base que já contém a estrutura inici
 
 1. Faça um **fork** do repositório base para sua conta do GitHub
 2. Crie uma conta no [N8N Cloud](https://n8n.io/) ou instale localmente
-3. Abra o notebook `src/extrair_clientes.ipynb` no [Google Colab](https://colab.research.google.com/) e execute para entender o fluxo de extração
+3. Abra o notebook `rpa/extrair_clientes.ipynb` no [Google Colab](https://colab.research.google.com/) e execute para entender o fluxo de extração
 
 > 💡 **Atenção:** O script já extrai os dados, mas o envio ao N8N está comentado (`TODO`). Você vai configurar a URL do Webhook após criá-lo na próxima etapa.
+
+#### Rodando o N8N localmente com Docker
+
+Este repositório inclui um `docker-compose.yml` que sobe o N8N na porta `5678`, com os dados persistidos em um volume:
+
+```bash
+docker compose up -d
+```
+
+1. Acesse **http://localhost:5678** e crie a conta de dono (local, só no primeiro acesso)
+2. Importe o workflow: menu **⋯ → Import from File** e selecione `n8n/workflow.json`
+3. No nó **Message a model**, crie a credencial do Google Gemini com uma chave gerada em [Google AI Studio](https://aistudio.google.com/apikey) e escolha um modelo disponível (ex.: `gemini-3.5-flash-lite`)
+4. Clique em **Publish** para ativar a URL de produção do Webhook (`/webhook/clientes`)
+
+#### Expondo o N8N local para o Google Colab (Cloudflared)
+
+O Colab roda nos servidores do Google e **não acessa o `localhost` da sua máquina**. Para que o notebook consiga chamar o Webhook, crie um túnel público temporário com o [Cloudflare Quick Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) (gratuito e sem conta):
+
+1. Com o N8N rodando, abra um novo terminal e execute (não é preciso instalar nada além do Docker):
+
+   ```bash
+   docker run --rm cloudflare/cloudflared:latest tunnel --no-autoupdate --url http://host.docker.internal:5678
+   ```
+
+2. Copie a URL exibida no log, no formato `https://palavras-aleatorias.trycloudflare.com`
+3. No notebook, use essa URL **acrescida do caminho do Webhook**:
+
+   ```python
+   N8N_WEBHOOK = "https://palavras-aleatorias.trycloudflare.com/webhook/clientes"
+   ```
+
+   - `/webhook/clientes`: URL de produção (workflow publicado). As execuções aparecem na aba **Executions**.
+   - `/webhook-test/clientes`: só funciona após clicar em **Execute workflow** no editor (execução visível no canvas).
+
+4. Execute o notebook no Colab. Mantenha o terminal do túnel aberto durante o teste (`Ctrl+C` encerra).
+
+> ⚠️ **Cuidados:**
+> - A URL do túnel **muda a cada execução** do `cloudflared`; atualize o notebook sempre que reiniciar o túnel.
+> - Chamar a URL base sem `/webhook/clientes` retorna **404**.
+> - O Cloudflare encerra requisições que demoram mais de ~100 s com o erro **524**. Se o modelo de IA estiver lento ou sobrecarregado, troque por um modelo mais rápido no nó **Message a model**.
+> - Enquanto o túnel estiver aberto, qualquer pessoa com a URL acessa o seu N8N. Encerre-o ao terminar.
+> - Se preferir não usar túnel, rode o notebook localmente (Jupyter/VS Code) com `N8N_WEBHOOK = "http://localhost:5678/webhook/clientes"`.
 
 ### Etapa 3: Desenvolva o Workflow no N8N
 
@@ -141,10 +183,11 @@ Conecte o Agente de IA do N8N a um modelo como Gemini ou GPT para:
 ```
 📁 dio-lab-assistente-investimentos-rpa-n8n/
 ├── 📄 README.md
-├── 📁 src/
-│   └── 📄 extrair_clientes.ipynb   # ✅ Notebook Python (já implementado, falta só o TODO)
+├── 📄 docker-compose.yml           # 🐳 N8N local via Docker
+├── 📁 rpa/
+│   └── 📄 extrair_clientes.ipynb   # ✅ Notebook Python (extração + envio ao Webhook do N8N)
 ├── 📁 n8n/
-│   └── 📄 workflow.json            # 🎯 Seu desafio: exportar o workflow aqui
+│   └── 📄 workflow.json            # ✅ Workflow N8N exportado (Webhook → CSV → Merge → Gemini → resposta)
 └── 📁 docs/
     ├── 📄 index.html               # ✅ Página de clientes (já implementado)
     └── 📄 data.csv                 # ✅ Opções de investimento (já implementado)
